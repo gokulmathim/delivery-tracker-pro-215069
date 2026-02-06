@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, DefaultDict, Set
+from typing import Any
 from uuid import UUID
 
 from fastapi import WebSocket
@@ -26,7 +27,8 @@ class RealtimeHub:
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._delivery_subscribers: DefaultDict[UUID, Set[WebSocket]] = DefaultDict(set)
+        # IMPORTANT: must be a real runtime defaultdict, not typing.DefaultDict (type-only).
+        self._delivery_subscribers: dict[UUID, set[WebSocket]] = defaultdict(set)
 
     async def subscribe(self, websocket: WebSocket, delivery_id: UUID) -> None:
         async with self._lock:
