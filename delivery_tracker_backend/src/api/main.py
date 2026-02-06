@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.db import apply_schema_if_needed, get_db_session
+from src.api.db import apply_schema_if_needed, get_db_session, get_engine
 from src.api.deps import CurrentUser, get_current_user, require_admin, require_driver_or_admin
 from src.api.realtime import realtime_hub
 from src.api.schemas import (
@@ -66,9 +66,20 @@ app = FastAPI(
     openapi_tags=openapi_tags,
 )
 
-# CORS: allow frontend access. If FRONTEND_ORIGIN is set, use it; otherwise allow all (dev-friendly).
+# CORS: allow frontend access.
+# Default must include CRA dev server (http://localhost:3000).
+# You can override/extend via env vars:
+# - FRONTEND_ORIGIN: single origin
+# - FRONTEND_ORIGINS: comma-separated origins
 frontend_origin = os.getenv("FRONTEND_ORIGIN")
-allow_origins = [frontend_origin] if frontend_origin else ["*"]
+frontend_origins = os.getenv("FRONTEND_ORIGINS")
+
+if frontend_origins:
+    allow_origins = [o.strip() for o in frontend_origins.split(",") if o.strip()]
+elif frontend_origin:
+    allow_origins = [frontend_origin.strip()]
+else:
+    allow_origins = ["http://localhost:3000"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -872,8 +883,14 @@ async def realtime_ws(websocket: WebSocket) -> None:
 
             # Authorize subscription: must be admin, owner, or assigned driver.
             # We check from DB on each subscription request for correctness.
-            async with get_db_session().__anext__() as session:  # type: ignore[misc]
-                res = await session.execute(text("SELECT user_id, assigned_driver_id FROM deliveries WHERE id = :id"), {"id": str(delivery_id)})
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            sessionmaker = async_sessionmaker(get_engine(), expire_on_commit=False)
+            async with sessionmaker() as session:
+                res = await session.execute(
+                    text("SELECT user_id, assigned_driver_id FROM deliveries WHERE id = :id"),
+                    {"id": str(delivery_id)},
+                )
                 delivery = res.mappings().first()
                 if not delivery:
                     await websocket.send_json({"error": "Delivery not found"})
